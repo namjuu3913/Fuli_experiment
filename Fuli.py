@@ -3,6 +3,8 @@ import faiss, json, random
 from pathlib import Path
 from sentence_transformers import SentenceTransformer as ST
 import asyncio
+from typing import Union
+
 
 ST_MODEL_PATH = Path(__file__).resolve().parent / "models" / "models--sentence-transformers--paraphrase-multilingual-mpnet-base-v2"/"snapshots"/"4328cf26390c98c5e3c738b4460a05b95f4911f5"
 if not ST_MODEL_PATH.exists():
@@ -11,39 +13,29 @@ model = ST(str(ST_MODEL_PATH), device='cpu')
 EMBEDDING_DIMENSION = model.get_sentence_embedding_dimension()
 
 class Fuli:
-    # is it initialized?
-    flag : bool = False
-    # demension
-    d: int
-    # name of character
-    name: str
-
-    # PATH
-    recent_mem_path: Path
-    impressive_mem_path: Path
-    long_term_mem_path: Path
-    background_path: Path
-
-    # DB
-    # recent_mem
-    recent_mem_vec: faiss.Index
-    recent_mem_gen: list[dict]
-    # impressive_mem
-    impress_mem_vec: faiss.Index
-    impress_mem_gen: list[dict]
-    # long_term_mem
-    long_term_mem_vec: faiss.Index
-    long_term_mem_gen: list[dict]
-    # background
-    background_vec: faiss.Index
-    background_gen: list[dict]
-
-
     def __init__(self, name: str):
-        self.name = name
-        self.flag = False
+        # is it initialized?
+        self.flag : bool = False
+        # demension
+        self.d: int = EMBEDDING_DIMENSION
+        # name of character
+        self.name: str = name
+        # counter flag(is over then 10?)
+        self.cnt: int = 0; 
 
-        self.d = EMBEDDING_DIMENSION
+        # DB
+        # recent_mem
+        self.recent_mem_vec: faiss.Index
+        self.recent_mem_gen: list[dict]
+        # impressive_mem
+        self.impress_mem_vec: faiss.Index
+        self.impress_mem_gen: list[dict]
+        # long_term_mem
+        self.long_term_mem_vec: faiss.Index
+        self.long_term_mem_gen: list[dict]
+        # background
+        self.background_vec: faiss.Index
+        self.background_gen: list[dict]
 
         # PATH
         # recent memory
@@ -150,6 +142,78 @@ class Fuli:
     def add_conv_as_memory(self, conversation: dict) -> None:
         # embedding the user text
         vectored_text = Fuli._get_vector_from_text(conversation['context']['user'])
-        # save
-        if(conversation):
-            asdf
+
+        # --- save ---
+        # get impressive abs value of VAD vector -> abs(impressive_Vector)
+        impressiveness: Union[bool, int] = self.get_impressive(conversation['emotion'])
+        # does it succed to make it as vector?
+        if isinstance(impressiveness, bool):
+            raise Exception("Failed to make VAD vector value")
+        # if value is more then 1
+        if isinstance(impressiveness, int) and impressiveness > 100:
+            raise Exception("Absolute value of VAD vector exceeded 100")
+        # add to dict
+        conversation["impressiveness"] = impressiveness
+        
+        # is it impressive?
+        if impressiveness > 70:
+            new_id = len(self.impress_mem_gen)
+            faiss_id = np.array([new_id], dtype='int64')
+            self.impress_mem_vec.add_with_ids(vectored_text, faiss_id)
+            self.impress_mem_gen.append(conversation)
+            self.cnt += 1
+        else:
+            new_id = len(self.recent_mem_gen)
+            faiss_id = np.array([new_id], dtype='int64')
+            self.recent_mem_vec.add_with_ids(vectored_text, faiss_id)
+            self.recent_mem_gen.append(conversation)
+            self.cnt += 1
+        
+        if(self.cnt >= 10):
+            try:
+                self.save_recent_and_impress()
+                self.cnt = 0
+            except:
+                raise Exception("Failed to save last 10 conversation to db")
+            
+    def get_impressive(self, VAD:dict) -> Union[bool, int]:
+        # get VAD vector values
+        try:
+            V:float = VAD['Valence']
+            A:float = VAD['Arousal']
+            D:float = VAD['Dominance']
+        except:
+            return False
+        # are VAD values' ranges -1 ~ 1?
+        if not all(-1.0 <= val <= 1.0 for val in [V, A, D]):
+            print(f"Warning: VAD values exceeded range(-1 ~ 1). {VAD}")
+            return False
+        # calculate vector
+        magnitude = np.linalg.norm([V, A, D])
+        max_magnitude = np.sqrt(3)
+        normalized_score = magnitude / max_magnitude
+        impressiveness_score = int(normalized_score * 100)
+        return impressiveness_score
+        
+    def save_recent_and_impress(self):
+        print("Saving all DBs to disk...")
+        print("Saving all DBs to disk...")
+        
+        # 1. recent_mem
+        vec_path = self.recent_mem_path / "INDEX" / f"recent_{self.name}_VDB.index"
+        gen_path = self.recent_mem_path / "SQL" / f"recent_{self.name}_GDB.json"       
+        # Faiss save index
+        faiss.write_index(self.recent_mem_vec, str(vec_path))
+        # JSON save list
+        with open(gen_path, 'w', encoding='utf-8') as f:
+            json.dump(self.recent_mem_gen, f, indent=2, ensure_ascii=False)
+
+        # 2. impressive_mem save
+        vec_path = self.impressive_mem_path / "INDEX" / f"impressive_{self.name}_VDB.index"
+        gen_path = self.impressive_mem_path / "SQL" / f"impressive_{self.name}_GDB.json"
+        # Faiss save index
+        faiss.write_index(self.impress_mem_vec, str(vec_path))
+        # JSON save list
+        with open(gen_path, 'w', encoding='utf-8') as f:
+            json.dump(self.impress_mem_gen, f, indent=2, ensure_ascii=False)
+        
