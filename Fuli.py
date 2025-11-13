@@ -606,3 +606,42 @@ class Fuli:
             print(f"Error during DB search: {e}")
             return []
 #--------------------------------------------------
+
+    # when program truns off or delete this character, dump every log
+    def turn_off(self) -> None:
+        print(f"Turning off {self.name}. Saving session LOG...")
+        
+        # time stamp
+        timestamp_now = datetime.now()
+        timestamp_str = timestamp_now.strftime('%Y%m%d_%H%M%S') # 파일명에 적합한 형식
+        
+        # path
+        file_name = f"{self.name}-{timestamp_str}.json"
+        file_path = self.LOG_path / file_name
+        
+        self.LOG_path.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            data_to_save = [log.model_dump() for log in self.LOG]
+        except Exception as e:
+            print(f"Cannot save the log: {e}.")
+            return
+
+        # save it as json
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=str(self.LOG_path)) as tmp:
+                json.dump(data_to_save, tmp, ensure_ascii=False, indent=2)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp_name = tmp.name
+            
+            os.replace(tmp_name, file_path)
+            print(f"LOG save compelete! : {file_path}")
+            
+        except Exception as e:
+            print(f"!!! Failed to save log !!! : {file_path}. Error : {e}")
+            if 'tmp_name' in locals() and os.path.exists(tmp_name):
+                try:
+                    os.remove(tmp_name)
+                except:
+                    pass
