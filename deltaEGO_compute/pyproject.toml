@@ -1,0 +1,20 @@
+[project]
+name = "deltaEGO_compute"
+version = "0.1.0"
+description = "deltaEGO C++ analysis module"
+readme = "README.md"
+requires-python = ">=3.7"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["deltaEGO_compute"]
+
+[build-system]
+requires = ["scikit-build-core>=0.4.0"]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+cmake.source-dir = "."
+
+install.strip = false
+wheel.packages = ["src/deltaEGO_compute"]
