@@ -1,5 +1,5 @@
-from custom_lib.deltaEGO import deltaEGO,  weight, variable, EGO_axis, AnalysisResult_py
-from custom_lib.memory import VADModel, tokens, general_mem, long_term_mem, Fuli_LOG
+from PythonServer.customPY.deltaEGO import deltaEGO,  weight, variable, EGO_axis, AnalysisResult_py
+from PythonServer.customPY.memory import VADModel, tokens, general_mem, long_term_mem, Fuli_LOG
 from sentence_transformers import SentenceTransformer as ST
 from pydantic import ValidationError
 from typing import List, Union, Deque
@@ -7,12 +7,13 @@ from dataclasses import dataclass, field
 from collections import deque
 from pathlib import Path
 from typing import Union
-from default_class import Conversation
+from PythonServer.customPY.default_class import Conversation
 from datetime import datetime
 import faiss, json, os, tempfile, copy
 import asyncio, threading
 import numpy as np
 import warnings
+
 
 ST_MODEL_PATH = Path(__file__).resolve().parent / "models" / "models--sentence-transformers--paraphrase-multilingual-mpnet-base-v2"/"snapshots"/"4328cf26390c98c5e3c738b4460a05b95f4911f5"
 if not ST_MODEL_PATH.exists():
@@ -150,7 +151,7 @@ class Fuli:
         # background
         # self.background_path= Path(__file__).resolve().parent / "CharacterSave" / self.name/"Memories"/"background"
         # LOG
-        self.LOG_path = Path(__file__).resolve().parent / "CharacterSave" / self.name/ "LOG"
+        self.LOG_path = Path(__file__).resolve().parent / "CharacterSave" / self.name/ "Memories" / "LOG"
 
         self._locks = {
             "recent": threading.RLock(),
@@ -335,13 +336,13 @@ class Fuli:
         
         parsed_data = self.VAD_search_result
         emotion_result_array = parsed_data.get("result", [])
-        self.simple_emotion_result = [item['term'] for item in emotion_result_array[:self.emotion_num] if 'term' in item]
+        self.simple_emotion_result = [item['emotion'] for item in emotion_result_array[:self.emotion_num] if 'emotion' in item]
 
         # get state tokens
         self.simple_emotion_analysis_token = tokens(
-            stress = self.VAD_analysis_result['instant']['stress_ratio'],
-            reward = self.VAD_analysis_result['instant']['reward_ratio'],
-            shockingLevel = self.VAD_analysis_result['dynamics']['affective_lability']
+            stress = self.VAD_analysis_result.instant.stress_ratio,
+            reward = self.VAD_analysis_result.instant.reward_ratio,
+            shocking_level = self.VAD_analysis_result.dynamics.affective_lability
         )
 
         self.Abnomality = True
@@ -367,9 +368,9 @@ class Fuli:
         if not self.Abnomality:
             raise Exception(f"Emotion is not searched! Fatal logic error!!!!!! CALL THE POLICE!!!!!!")
         current_vad = VADModel(
-            V = self.VAD_search_result['query']['V'],
-            A = self.VAD_search_result['query']['A'],
-            D = self.VAD_search_result['query']['D']
+            Valence = self.VAD_search_result['query']['V'],  
+            Arousal = self.VAD_search_result['query']['A'], 
+            Dominance = self.VAD_search_result['query']['D'] 
         )
         time_stamp_now: str = datetime.now().isoformat()
         # update from here
@@ -380,14 +381,41 @@ class Fuli:
         if isinstance(popped_mem, general_mem):
             self.add_conv_as_memory(popped_mem)
 
+        #get analysis as dict
+        try:
+            analysis_dict = {
+                "instant": vars(self.VAD_analysis_result.instant),
+                "dynamics": vars(self.VAD_analysis_result.dynamics),
+                "cumulative": vars(self.VAD_analysis_result.cumulative)
+            }
+        except TypeError as e:
+            print(f"--- WARNING: Failed to convert analysis sub-objects with vars(): {e} ---")
+            # if vars() fail
+            analysis_dict = {
+                "instant": str(self.VAD_analysis_result.instant),
+                "dynamics": str(self.VAD_analysis_result.dynamics),
+                "cumulative": str(self.VAD_analysis_result.cumulative)
+            }
+
         new_LOG: Fuli_LOG = Fuli_LOG(
-            character_mem = mem,
-            VAD = current_vad,
-            analysis = self.VAD_analysis_result,
+            character_mem = mem.model_dump(),
+            VAD = current_vad.model_dump(),
+            analysis = analysis_dict,
             search_log = self.VAD_search_result,
             time_stamp = time_stamp_now
         )
-        self.LOG.append(new_LOG)        
+
+        # temp (shows log)
+        #try:
+        #    log_as_dict = new_LOG.model_dump()
+        #    pretty_log_str = json.dumps(log_as_dict, indent=2, ensure_ascii=False)
+        #    print(pretty_log_str)
+        #except Exception as e:
+        #    print(f"Could not pretty-print log: {e}")
+        #    print(f"Raw log: {str(new_LOG)}")
+
+        self.LOG.append(new_LOG)
+
         self.VAD_analysis_result = None
         self.VAD_search_result = None
         self.simple_emotion_analysis_token = None
@@ -612,6 +640,7 @@ class Fuli:
 
     # when program truns off or delete this character, dump every log
     def turn_off(self) -> None:
+        print(f"--- turn_off: Saving log for {self.name}... ---")
         print(f"Turning off {self.name}. Saving session LOG...")
         
         # time stamp
