@@ -14,7 +14,6 @@ import asyncio, threading
 import numpy as np
 import warnings
 
-
 ST_MODEL_PATH = Path(__file__).resolve().parent / "models" / "models--sentence-transformers--paraphrase-multilingual-mpnet-base-v2"/"snapshots"/"4328cf26390c98c5e3c738b4460a05b95f4911f5"
 if not ST_MODEL_PATH.exists():
     raise FileNotFoundError(f"Cannot find model folder: {ST_MODEL_PATH}")
@@ -105,7 +104,9 @@ class LLM_output:
 
 
 class Fuli:
-    def __init__(self, name: str, mem_length: int, emotion_load_num:int):
+    def __init__(self, name: str, short_mem_length: int, 
+                 recent_mem_length:int, impressive_mem_length:int, 
+                 longterm_mem_length:int, background_length:int, emotion_load_num:int):
         # is it initialized?
         self.flag : bool = False
         # demension
@@ -118,7 +119,10 @@ class Fuli:
         self.cnt: int = 0; 
 
         # last 8 conversations
-        self.last_n_mem:memory_queue = memory_queue(mem_length)
+        self.last_n_mem:memory_queue = memory_queue(short_mem_length)
+        # how many recent mem?
+        self.recent_mem_num:int = recent_mem_length
+        self.impressive_mem_num:int = impressive_mem_length
 
         # DB
         # recent_mem
@@ -142,7 +146,7 @@ class Fuli:
         # impressive memory
         self.impressive_mem_path = Path(__file__).resolve().parent / "CharacterSave" / self.name/"Memories"/"impressive_mem"
         # long term memory
-        self.long_term_mem_path = Path(__file__).resolve().parent / "CharacterSave" / self.name/"Memories"/"long_term_mem"
+        # self.long_term_mem_path = Path(__file__).resolve().parent / "CharacterSave" / self.name/"Memories"/"long_term_mem"
         # background
         # self.background_path= Path(__file__).resolve().parent / "CharacterSave" / self.name/"Memories"/"background"
         # LOG
@@ -164,6 +168,8 @@ class Fuli:
         # VAD variables
         self.VAD_search_result: Union[dict, None] = None
         self.VAD_analysis_result: Union[AnalysisResult_py, None] = None
+        self.simple_emotion_result:Union[List[str], None] = None
+        self.simple_emotion_analysis_token: Union[tokens, None] = None
 
         # did it searched emotion?
         self.Abnomality: bool = False       
@@ -326,6 +332,17 @@ class Fuli:
         except Exception as e:
             print(f"Analysis Fail! Location:{Path(__file__)}. Error: {e}")
             return False
+        
+        parsed_data = self.VAD_search_result
+        emotion_result_array = parsed_data.get("result", [])
+        self.simple_emotion_result = [item['term'] for item in emotion_result_array[:self.emotion_num] if 'term' in item]
+
+        # get state tokens
+        self.simple_emotion_analysis_token = tokens(
+            stress = self.VAD_analysis_result['instant']['stress_ratio'],
+            reward = self.VAD_analysis_result['instant']['reward_ratio'],
+            shockingLevel = self.VAD_analysis_result['dynamics']['affective_lability']
+        )
 
         self.Abnomality = True
         return True
@@ -346,22 +363,18 @@ class Fuli:
         return impressiveness_score
     
     
-    def update_memory(self, conversation_dict: dict, llm_VAD_dict: dict) -> None:
+    def update_memory(self, conversation: Conversation) -> None:
         if not self.Abnomality:
-            raise Exception(f"Emotion is not searched! Fatal logic error!!!!!! CALL POLICE!!!!!!")
-        
-        try:
-            convo_model = Conversation.model_validate(conversation_dict)
-            vad_model = VADModel.model_validate(llm_VAD_dict)
-
-        except ValidationError as e:
-            warnings.warn(f"LLM output parsing error: {e}", ValidationError)
-            return
-        
+            raise Exception(f"Emotion is not searched! Fatal logic error!!!!!! CALL THE POLICE!!!!!!")
+        current_vad = VADModel(
+            V = self.VAD_search_result['query']['V'],
+            A = self.VAD_search_result['query']['A'],
+            D = self.VAD_search_result['query']['D']
+        )
         time_stamp_now: str = datetime.now().isoformat()
         # update from here
-        current_impressiveness: int = self.get_impressive(vad_model)
-        mem: general_mem = self.make_new_gen_mem(convo_model, current_impressiveness, time_stamp_now)
+        current_impressiveness: int = self.get_impressive(current_vad)
+        mem: general_mem = self.make_new_gen_mem(conversation, current_impressiveness, time_stamp_now)
 
         popped_mem: Union[None, general_mem] = self.last_n_mem.add_memory(mem)    
         if isinstance(popped_mem, general_mem):
@@ -369,7 +382,7 @@ class Fuli:
 
         new_LOG: Fuli_LOG = Fuli_LOG(
             character_mem = mem,
-            VAD = vad_model,
+            VAD = current_vad,
             analysis = self.VAD_analysis_result,
             search_log = self.VAD_search_result,
             time_stamp = time_stamp_now
@@ -377,6 +390,8 @@ class Fuli:
         self.LOG.append(new_LOG)        
         self.VAD_analysis_result = None
         self.VAD_search_result = None
+        self.simple_emotion_analysis_token = None
+        self.simple_emotion_result = None
         self.Abnomality = False
 
 #TODO asyncio
@@ -406,25 +421,13 @@ class Fuli:
                 raise Exception("Failed to save last 10 conversation to db")
 
     def make_new_gen_mem(self, context_in: Conversation, impressiveness_in: int, time_stamp_in:str) -> general_mem:
-        # emotion search (emotion)
-        parsed_data = self.VAD_search_result
-        emotion_result_array = parsed_data.get("result", [])
-        emotions_list = [item['emotion'] for item in emotion_result_array[:self.emotion_num] if 'emotion' in item]
-
-        # get state tokens
-        generated_tokens: tokens = tokens(
-            stress = self.VAD_analysis_result['instant']['stress_ratio'],
-            reward = self.VAD_analysis_result['instant']['reward_ratio'],
-            shockingLevel = self.VAD_analysis_result['dynamics']['affective_lability']
-        )
-
         # make new memory
         new_memory : general_mem = general_mem(
-            emotion = emotions_list,
+            emotion = self.simple_emotion_result,
             impressiveness = impressiveness_in,
             time_stamp = time_stamp_in,
             context = context_in,
-            state_tokens = generated_tokens
+            state_tokens = self.simple_emotion_analysis_token
         )
 
         return new_memory
@@ -503,8 +506,8 @@ class Fuli:
         
         # search mamory with multithreading
         search_tasks = [
-            asyncio.to_thread(self.search_recent_mem, vectored_in, 7),
-            asyncio.to_thread(self.search_impressive_mem, vectored_in, 2)
+            asyncio.to_thread(self.search_recent_mem, vectored_in, self.recent_mem_num),
+            asyncio.to_thread(self.search_impressive_mem, vectored_in, self.impressive_mem_num)
             #asyncio.to_thread(self.search_long_term_mem, vectored_in, 2)
             #asyncio.to_thread(self.search_background_mem, vectored_in, 5)
         ]
