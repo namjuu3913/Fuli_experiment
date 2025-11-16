@@ -1,6 +1,7 @@
 from deltaEGO_VDB import EGOSearcher
 import deltaEGO_compute
-from typing import Union, List, Dict, TypedDict, Optional, TypeAlias
+from typing import Union, List, Dict, Optional, TypeAlias
+from typing_extensions import TypedDict
 from pathlib import Path
 import time, warnings
 
