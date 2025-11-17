@@ -381,28 +381,48 @@ class Fuli:
         if isinstance(popped_mem, general_mem):
             self.add_conv_as_memory(popped_mem)
 
-        #get analysis as dict
-        try:
-            analysis_dict = {
-                "instant": vars(self.VAD_analysis_result.instant),
-                "dynamics": vars(self.VAD_analysis_result.dynamics),
-                "cumulative": vars(self.VAD_analysis_result.cumulative)
+        # get analysis as dict 
+        # --> since analysis result is typedDict, I did it like this
+        analysis_dict = {
+            "instant": {
+                "stress"        : self.VAD_analysis_result.instant.stress,
+                "reward"        : self.VAD_analysis_result.instant.reward,
+                "ratio_total"   : self.VAD_analysis_result.instant.ratio_total,
+                "stress_ratio"  : self.VAD_analysis_result.instant.stress_ratio,
+                "reward_ratio"  : self.VAD_analysis_result.instant.reward_ratio,
+                "deviation"     : self.VAD_analysis_result.instant.deviation
+            },
+            "dynamics": {
+                "delta": {
+                    "v"         : self.VAD_analysis_result.dynamics.delta.v,
+                    "a"         : self.VAD_analysis_result.dynamics.delta.a, 
+                    "d"
+                    "timestamp" : self.VAD_analysis_result.dynamics.delta.timestamp, 
+                    "owner"    : self.VAD_analysis_result.dynamics.delta.owner
+                },
+                "affective_lability": self.VAD_analysis_result.dynamics.affective_lability
+            },
+            "cumulative": {
+                "average_area": {
+                    "x"         : self.VAD_analysis_result.cumulative.average_area.x, 
+                    "y"         : self.VAD_analysis_result.cumulative.average_area.y, 
+                    "z"         : self.VAD_analysis_result.cumulative.average_area.z, 
+                    "radius"    : self.VAD_analysis_result.cumulative.average_area.radius
+                },
+                "stress"        : self.VAD_analysis_result.cumulative.stress,
+                "reward"        : self.VAD_analysis_result.cumulative.reward,
+                "total"         : self.VAD_analysis_result.cumulative.total,
+                "stress_ratio"  : self.VAD_analysis_result.cumulative.stress_ratio,
+                "reward_ratio"  : self.VAD_analysis_result.cumulative.reward_ratio
             }
-        except TypeError as e:
-            print(f"--- WARNING: Failed to convert analysis sub-objects with vars(): {e} ---")
-            # if vars() fail
-            analysis_dict = {
-                "instant": str(self.VAD_analysis_result.instant),
-                "dynamics": str(self.VAD_analysis_result.dynamics),
-                "cumulative": str(self.VAD_analysis_result.cumulative)
-            }
+    }
 
         new_LOG: Fuli_LOG = Fuli_LOG(
-            character_mem = mem.model_dump(),
-            VAD = current_vad.model_dump(),
-            analysis = analysis_dict,
-            search_log = self.VAD_search_result,
-            time_stamp = time_stamp_now
+            character_mem = mem.model_dump(),   # character's memory
+            VAD = current_vad.model_dump(),     # that memory's VAD
+            analysis = analysis_dict,           # VAD analysis
+            search_log = self.VAD_search_result,# VAD search log
+            time_stamp = time_stamp_now         # when this log made
         )
 
         # temp (shows log)
@@ -421,6 +441,7 @@ class Fuli:
         self.simple_emotion_analysis_token = None
         self.simple_emotion_result = None
         self.Abnomality = False
+
 
 #TODO asyncio
     def add_conv_as_memory(self, mem: general_mem) -> general_mem:
@@ -645,7 +666,7 @@ class Fuli:
         
         # time stamp
         timestamp_now = datetime.now()
-        timestamp_str = timestamp_now.strftime('%Y%m%d_%H%M%S') # 파일명에 적합한 형식
+        timestamp_str = timestamp_now.strftime('%Y%m%d_%H%M%S') 
         
         # path
         file_name = f"{self.name}-{timestamp_str}.json"
@@ -677,3 +698,4 @@ class Fuli:
                     os.remove(tmp_name)
                 except:
                     pass
+
