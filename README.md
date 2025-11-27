@@ -11,11 +11,45 @@ It currently uses a **vector-based RAG 1.0** architecture
 (FAISS semantic search over past conversations),
 and is designed to be upgraded to **RAG 2.0 (graph-based)** in future work.
 
-It does 3 main things:
+Fuli does 3 main things:
 
 1. Receives a VAD vector from the LLM and runs **deltaEGO** (search + analysis)  
 2. Decides how “impressive” the current turn is and updates memories  
 3. Retrieves relevant memories asynchronously and returns them as text context
+
+---
+
+## 🧩 System overview: Fuli + deltaEGO (RAG 1.0)
+
+Fuli is the emotion-aware **memory orchestrator** in a RAG 1.0 setup:
+
+- It retrieves relevant memories (FAISS vector search).
+- It asks the LLM to **infer a VAD vector** (Valence–Arousal–Dominance).
+- It calls `deltaEGO` to search a custom VAD vector DB and analyze emotion.
+- It builds a final prompt with:
+  - character info,
+  - retrieved memories,
+  - emotion labels,
+  - stress / reward tokens,
+  - whiplash (affective lability),
+  and then gets the final character response.
+
+### High-level pipeline
+
+![Pipeline overview](./sequence.png)
+
+Rough flow:
+
+1. **User → Fuli** – user sends an input message  
+2. **Fuli → Memory** – retrieve recent & impressive memories (RAG 1.0, FAISS)  
+3. **Fuli → LLM (VAD mode)** – ask LLM to act as a “psychologist” and output VAD  
+4. **LLM → Fuli (VAD JSON)** – reasoning in `<think>...</think>`, then JSON VAD  
+5. **Fuli → deltaEGO** – VADsearch (KD-tree) + analize_VAD (metrics)  
+6. **Fuli → LLM (character mode)** – build emotion-aware prompt and get reply  
+7. **LLM → User & Memory** – send reply, log VAD/search/analysis into memory  
+
+This is the current **RAG 1.0 layer**: vector-based retrieval with FAISS,
+emotion-aware scoring with deltaEGO, and a two-stage LLM pipeline.
 
 ---
 
@@ -98,3 +132,54 @@ loads or creates:
   * (long-term/background are prepared but commented out for now)
     
 All saves are done atomically with temp files to **be safe under multithreading**.
+---
+## 🩺 Step 1 – `get_emotion(...)`: running deltaEGO
+```python
+def get_emotion(self, VAD_str: str) -> bool:
+    # 1) parse JSON from LLM
+    #    {"Valence": float, "Arousal": float, "Dominance": float}
+    # 2) validate range [-1, 1]
+    # 3) run deltaEGO VAD search + analysis
+    # 4) store simple emotions & state tokens
+```
+Typical call:
+```python
+ok = agent.get_emotion(vad_json_from_llm)
+if not ok:
+    # handle parse error or out-of-range VAD
+    ...
+```
+**LLM response example*
+
+![LLM_emotion_reasoning example](./VAD_LLM_think.png)
+Flow inside:
+1. Parse JSON → `V`, `A`, `D`
+2. Validate `-1.0 <= V, A, D <= 1.0`
+3. Call `self.Carman.VADsearch(...)` with `self.Ayin.search_config`
+4. Call `self.Carman.analize_VAD(...)` with `self.Ayin.analysis_config`
+5. Extract:
+    * `self.simple_emotion_result` = top-N emotion labels
+    * `self.simple_emotion_analysis_token` = tokens(stress, reward, shocking_level)
+    * `self.Abnomality = True` (guard flag: “emotion computed”)
+---
+## 🧩 Step 2 – `update_memory(...)`: logging the conversation
+Usage pattern: always call `get_emotion()` first, then `update_memory()`.
+```python
+def update_memory(self, conversation: Conversation) -> None:
+    if not self.Abnomality:
+        raise Exception("Emotion is not searched! ...")
+    ...
+```
+Inside:
+
+1. Build the current `VADModel` from `self.VAD_search_result['query']`
+2. Compute `impressiveness` (0–100) from VAD magnitude
+3. Create new `general_mem` with:
+    * emotion labels (`self.simple_emotion_result`)
+    * state tokens (`self.simple_emotion_analysis_token`)
+    * time stamp
+    * raw `Conversation`
+4. Push into `last_n_mem`; if an item is popped, send it to FAISS via `add_conv_as_memory`
+5. Pack deltaEGO metrics into `analysis_dict`
+6. Create a `Fuli_LOG` entry and append to `self.LOG`
+7. Reset VAD-related state (`Abnomality = False`, etc.)
