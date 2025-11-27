@@ -52,6 +52,35 @@ This is the current **RAG 1.0 layer**: vector-based retrieval with FAISS,
 emotion-aware scoring with deltaEGO, and a two-stage LLM pipeline.
 
 ---
+## 📦 Data models (Pydantic)
+
+- `Conversation`  
+  Single turn of conversation: user text, model reply, metadata.
+
+- `VADModel`  
+  VAD triple for a turn: Valence / Arousal / Dominance.
+
+- `tokens`  
+  Small state tokens passed to the LLM:
+  - `stress`, `reward`, `shocking_level`.
+
+- `general_mem`  
+  One memory item:
+  - `emotion: List[str]` (top-k labels from deltaEGO_VDB)
+  - `impressiveness: int` (0–100)
+  - `time_stamp: str`
+  - `context: Conversation`
+  - `state_tokens: tokens`
+
+- `Fuli_LOG`  
+  Per-turn log:
+  - `character_mem: general_mem`
+  - `VAD: VADModel`
+  - `analysis: dict` (deltaEGO metrics)
+  - `search_log: dict` (deltaEGO VDB result)
+  - `time_stamp: str`
+ 
+---
 
 ## 🔧 Initialization
 
