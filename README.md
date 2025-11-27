@@ -183,3 +183,90 @@ Inside:
 5. Pack deltaEGO metrics into `analysis_dict`
 6. Create a `Fuli_LOG` entry and append to `self.LOG`
 7. Reset VAD-related state (`Abnomality = False`, etc.)
+
+---
+## 🧠 Step 3 – `get_memories(...)`: async memory retrieval
+```python
+context_block = await agent.get_memories(user_input_text)
+```
+`get_memories(...)`:
+  * Dumps the last N conversations from `last_n_mem`
+  * Embeds the query text with SentenceTransformer (in a worker thread)
+  * Searches recent and impressive FAISS DBs in parallel (threads)
+  * Returns a formatted string:
+
+```text
+last 8 conversation:
+...
+
+--- Relevant Recent Memories ---
+...
+
+--- Relevant Impressive Memories ---
+...
+```
+This string is intended to be **directly inserted into the LLM prompt**.
+
+---
+## 🎥 End-to-end demo: VAD → deltaEGO → memory
+### 1. LLM infers VAD (Fuli → LLM)
+
+Fuli first calls the LLM in a “therapist / analyst” role to estimate the Valence–Arousal–Dominance (VAD) vector for the current situation.
+
+Example: analyzing how All Might feels when greeted with “Hello!”:
+
+The model reasons inside `<think> ... </think>` and then outputs JSON:
+```json
+{
+  "Valence": 0.8,
+  "Dominance": 0.7,
+  "Arousal": 0.3
+}
+```
+Fuli parses this JSON and sends the numeric VAD vector to ```deltaEGO```.
+### 2. deltaEGO_VDB: searching in VAD space
+deltaEGO calls its custom KD-Tree–based VAD vector DB:
+  * The black diamond is the input VAD.
+  * Green points are the nearest emotions (e.g. `celebratory`, similarity ≈ 99%).
+  * Colored dots are all database entries in continuous VAD space.
+
+This step answers:
+
+*“Given this VAD, which labeled emotions are closest,and how strong is that similarity?”*
+
+### 3. deltaEGO analysis: metrics for memory & behavior
+Fuli then calls:
+```python
+self.VAD_analysis_result = self.Carman.analize_VAD(
+    weights=self.Ayin.analysis_config.weights,
+    variables=self.Ayin.analysis_config.var,
+    emotion_base=self.Ayin.analysis_config.ego_axis,
+    return_analysis=True,
+    append_emotion=True,
+)
+```
+deltaEGO returns:
+  * Instant metrics – stress, reward, ratios, deviation
+  * Dynamic metrics – VAD delta, affective lability (whiplash)
+  * Cumulative metrics – average VAD area, cumulative stress / reward
+
+These metrics are used to:
+  * compute `impressiveness` for memory,
+  * generate `tokens` for the LLM prompt,
+  * log per-turn emotional state in `Fuli_LOG`.
+---
+## 🧪 Typical usage pattern
+Putting it all together, a single turn looks like this:
+```text
+User input
+  → Fuli: retrieve memories (RAG 1.0, FAISS)
+  → Fuli → LLM (VAD mode): infer VAD JSON
+  → Fuli → deltaEGO: VADsearch + analize_VAD
+  → Fuli: update_memory(conversation)
+  → Fuli → LLM (character mode): build emotion-aware prompt
+  → LLM: final reply
+  → User
+```
+This demonstrates that Fuli and **deltaEGO are working end-to-end**:
+the character’s response is conditioned not only on text memories,
+but also on an explicit, computed emotional state.
